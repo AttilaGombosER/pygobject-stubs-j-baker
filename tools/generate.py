@@ -314,10 +314,7 @@ def _type_to_python(
         else:
             namespace = interface.get_namespace()
             raw_name = interface.get_name()
-            if raw_name[0].isdigit():
-                name = f'"{raw_name}"'
-            else:
-                name = raw_name
+            name = _get_name(raw_name, namespace)
 
             if namespace == "GObject" and name == "Value":
                 return "typing.Any"
@@ -558,7 +555,7 @@ def _gi_build_stub(
             continue
 
         # Check if this is a valid name in python
-        if not re.match(_identifier_re, name):
+        if not re.match(_identifier_re, _get_name(name, current_namespace)):
             continue
 
         try:
@@ -597,11 +594,6 @@ def _gi_build_stub(
 
     # Constants
     for name in sorted(constants):
-        if name[0].isdigit():
-            # GDK has some busted constant names like
-            # Gdk.EventType.2BUTTON_PRESS
-            continue
-
         override = _check_override(prefix_name, name, overrides)
         if override:
             ret += override + "\n"
@@ -612,14 +604,15 @@ def _gi_build_stub(
         if str(val).startswith(("<flags", "<enum")):
             val = val.real
 
+        constant = _get_name(name, current_namespace)
         if isinstance(val, str):
-            ret += f'{name}: {val.__class__.__name__} = "{val}"\n'
+            ret += f'{constant}: {val.__class__.__name__} = "{val}"\n'
         elif isinstance(val, (bool, float, int)):
-            ret += f"{name}: {val.__class__.__name__} = {val}\n"
+            ret += f"{constant}: {val.__class__.__name__} = {val}\n"
         elif val.__class__.__name__ == "Atom":
-            ret += f"{name}: {val.__class__.__name__} = ...\n"
+            ret += f"{constant}: {val.__class__.__name__} = ...\n"
         else:
-            ret += f"{name} = ... # FIXME Constant\n"
+            ret += f"{constant} = ... # FIXME Constant\n"
 
     if ret and constants:
         ret += "\n"
@@ -736,6 +729,7 @@ def _gi_build_stub(
         if len(parents) > 0:
             string_parents = f"({', '.join(parents)})"
 
+        name = _get_name(name, current_namespace)
         if (
             not classret
             and len(fields) == 0
@@ -845,9 +839,10 @@ def _gi_build_stub(
             needed_namespaces.add("GObject")
             base = "GObject.GFlags"
 
+        name = _get_name(name, current_namespace)
         ret += f"class {name}({base}):\n"
         for key in sorted(vars(obj)):
-            if key.startswith("__") or key[0].isdigit():
+            if key.startswith("__"):
                 continue
 
             override = _check_override(full_name, key, overrides)
@@ -856,6 +851,7 @@ def _gi_build_stub(
                     ret += "    " + line + "\n"
                 continue
 
+            flag = _get_name(key, current_namespace)
             o = getattr(obj, key)
             if isinstance(o, GI.FunctionInfo):
                 function_ret = _build_function(
@@ -865,9 +861,9 @@ def _gi_build_stub(
                     ret += "    " + line + "\n"
             elif hasattr(o, "real"):
                 value = o.real
-                ret += f"    {key} = {value}\n"
+                ret += f"    {flag} = {value}\n"
             else:
-                ret += f"    {key} = ... # FIXME Flags\n"
+                ret += f"    {flag} = ... # FIXME Flags\n"
         ret += "\n"
 
     # Enums
@@ -888,10 +884,11 @@ def _gi_build_stub(
             needed_namespaces.add("GObject")
             base = "GObject.GEnum"
 
+        name = _get_name(name, current_namespace)
         ret += f"class {name}({base}):\n"
         any_variants = False
         for key in sorted(vars(obj)):
-            if key.startswith("__") or key[0].isdigit():
+            if key.startswith("__"):
                 continue
 
             override = _check_override(full_name, key, overrides)
@@ -900,6 +897,7 @@ def _gi_build_stub(
                     ret += "    " + line + "\n"
                 continue
 
+            variant = _get_name(key, current_namespace)
             o = getattr(obj, key)
             if isinstance(o, GI.FunctionInfo):
                 function_ret = _build_function(
@@ -909,9 +907,9 @@ def _gi_build_stub(
                     ret += "    " + line + "\n"
             elif hasattr(o, "real"):
                 value = o.real
-                ret += f"    {key} = {value}\n"
+                ret += f"    {variant} = {value}\n"
             else:
-                ret += f"    {key} = ... # FIXME Enum\n"
+                ret += f"    {variant} = ... # FIXME Enum\n"
             any_variants = True
         if not any_variants:
             ret += "    pass\n"
@@ -951,6 +949,10 @@ def _get_gname(obj: Type[Any]) -> Optional[str]:
     if not hasattr(obj, "__gtype__"):
         return None
     return obj.__gtype__.name  # type: ignore
+
+
+def _get_name(name: str, namespace: str) -> str:
+    return f"{namespace}{name}" if name[0].isdigit() else name
 
 
 def start(module: str, version: str, overrides: dict[str, str]) -> str:
